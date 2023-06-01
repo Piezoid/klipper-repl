@@ -33,10 +33,12 @@ async def run(args):
     first_reconnect = True
     loop = asyncio.get_event_loop()
 
-    stdin_read = asyncio.StreamReader()
-    await loop.connect_read_pipe(lambda: asyncio.StreamReaderProtocol(stdin_read),
-                                sys.stdin)
-    session = PromptSession(complete_style=CompleteStyle.READLINE_LIKE, style=style)
+    interactive = len(args.gcode) == 0 or args.interactive
+    if interactive:
+        stdin_read = asyncio.StreamReader()
+        await loop.connect_read_pipe(lambda: asyncio.StreamReaderProtocol(stdin_read),
+                                    sys.stdin)
+        session = PromptSession(complete_style=CompleteStyle.READLINE_LIKE, style=style)
 
     while True:
         try:
@@ -51,22 +53,39 @@ async def run(args):
             await asyncio.sleep(0.25)
             continue
 
+        rpcs = [
+            rpc('info', id=ResponseType.Info, params={
+                'client_info': { 'version': 'v1' }
+            }),
+            rpc('gcode/subscribe_output', key=ResponseType.Gcode)
+        ]
+        if interactive:
+            rpcs.append(rpc('gcode/help', id=ResponseType.Macros))
+            handle_gcode = render_output
+        else:
+            async def handle_gcode(res):
+                await render_output(res)
+                raise asyncio.CancelledError()
+
         connect_event = asyncio.Event()
         macro_event = asyncio.Event()
         recv_task = loop.create_task(receive_task(sock_read,
                                                   connect_event,
-                                                  macro_event))
-        await klipper_call(sock_write, [
-            rpc('info', id=ResponseType.Info, params={
-                'client_info': { 'version': 'v1' }
-            }),
-            rpc('gcode/help', id=ResponseType.Macros),
-            rpc('gcode/subscribe_output', key=ResponseType.Gcode)
-        ])
+                                                  macro_event,
+                                                  handle_gcode))
+        await klipper_call(sock_write, rpcs)
         await connect_event.wait()
 
         if len(args.gcode) > 0:
             await send_gcode(sock_write, ' '.join(args.gcode))
+        if not interactive:
+            try:
+                await recv_task
+            except asyncio.CancelledError:
+                pass
+            finally:
+                sock_write.close()
+                await sock_write.wait_closed()
             return 0
 
         first_reconnect = True
@@ -102,6 +121,8 @@ async def run(args):
 
 def main():
     parser = argparse.ArgumentParser(description='A Klipper g-code command line.')
+    parser.add_argument('-i', '--interactive', action='store_true',
+                        help='Force interactive session if gcode is specified')
     parser.add_argument('socket', help='The Klipper API socket to connect to')
     parser.add_argument('gcode', nargs='*', help='G-code to send to Klipper')
 

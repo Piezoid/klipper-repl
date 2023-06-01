@@ -28,12 +28,12 @@ async def update_macros(data, event):
         shared.macro_list = list(output.keys())
         event.set()
 
-async def receive_task(reader, connect_event, macro_event):
+async def receive_task(reader, connect_event, macro_event, handle_gcode=render_output):
     while True:
         data = await reader.readuntil(separator=b'\x03')
         res = json.loads(data[:-1].decode())
         if res.get('key') == ResponseType.Gcode:
-            await render_output(res)
+            await handle_gcode(res)
         elif res.get('id') == ResponseType.Macros:
             await update_macros(res, macro_event)
         elif res.get('id') == ResponseType.Info:
