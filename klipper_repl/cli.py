@@ -9,6 +9,8 @@ from prompt_toolkit.patch_stdout import patch_stdout
 from prompt_toolkit.completion import WordCompleter
 from prompt_toolkit.shortcuts import CompleteStyle
 from prompt_toolkit.lexers import PygmentsLexer
+from prompt_toolkit.key_binding import KeyBindings
+from prompt_toolkit.document import Document
 
 from .api import ResponseType, rpc, klipper_call, send_gcode, \
     receive_task, shared
@@ -19,11 +21,19 @@ from .output import print_output, render_output
 async def run_repl(sock_write, session, prompt):
     completion = WordCompleter(shared.macro_list, ignore_case=True)
     lexer = PygmentsLexer(KlipperLexer)
+    session.app.ttimeoutlen = 0.05
+    kbs = KeyBindings()
+    @kbs.add('escape', 'escape', eager=True)
+    def _(event):
+        app = event.app
+        app.current_buffer.document = Document('M112')
+        app.exit(result="enter")
 
     with patch_stdout():
         while True:
             try:
-                line = await session.prompt_async(prompt, completer=completion, lexer=lexer)
+                line = await session.prompt_async(prompt, completer=completion,
+                                                  lexer=lexer, key_bindings=kbs)
             except KeyboardInterrupt:
                 raise EOFError()
             await send_gcode(sock_write, line)
@@ -91,7 +101,7 @@ async def run(args):
         first_reconnect = True
         hostname = shared.connection_info.get('hostname')
         if first_connect:
-            print_output(f'## Connected to Klipper at {hostname}:{args.socket}\n   ^C or ^D to quit; type M112 for emergency stop')
+            print_output(f'## Connected to Klipper at {hostname}:{args.socket}\n   ^C or ^D to quit; ^[^[ (ESC twice) or type M112 for emergency stop')
             first_connect = False
         else:
             print_output('## Reconnected to Klipper')
