@@ -28,19 +28,16 @@ async def update_macros(data, event):
         shared.macro_list = list(output.keys())
         event.set()
 
-async def receive_task(reader, connect_event, macro_event, disconnect_event):
-    try:
-        while True:
-            data = await reader.readuntil(separator=b'\x03')
-            res = json.loads(data[:-1].decode())
-            if res.get('key') == ResponseType.Gcode:
-                await render_output(res)
-            elif res.get('id') == ResponseType.Macros:
-                await update_macros(res, macro_event)
-            elif res.get('id') == ResponseType.Info:
-                await update_connection_info(res, connect_event)
-    except Exception as e:
-        disconnect_event.set()
+async def receive_task(reader, connect_event, macro_event):
+    while True:
+        data = await reader.readuntil(separator=b'\x03')
+        res = json.loads(data[:-1].decode())
+        if res.get('key') == ResponseType.Gcode:
+            await render_output(res)
+        elif res.get('id') == ResponseType.Macros:
+            await update_macros(res, macro_event)
+        elif res.get('id') == ResponseType.Info:
+            await update_connection_info(res, connect_event)
 
 def rpc(method, id=None, key=None, params=None):
     call = { 'method': method }
